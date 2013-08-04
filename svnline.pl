@@ -10,7 +10,7 @@ use Encode::JP;
 use File::Path;
 use Data::Dumper;
 
-print "svnline ver. 0.13.08.03.\n";
+print "svnline ver. 0.13.08.04.\n";
 my ($argv, $gOptions) = getOptions(\@ARGV); # オプションを抜き出す
 my $args = @{$argv};
 
@@ -22,6 +22,7 @@ if( $args != 2 ){
 	print "          : -t (file type regexp) : target file type.\n";
 	print "          : -xls (fileNmae) : output for excel.\n";
 	print "          : -wo (file) : without file path.\n";
+	print "          : -tmp_not_delete\n";
     exit;
 }
 
@@ -36,10 +37,10 @@ my $address = $argv->[0];
 my $outputFile = $argv->[1];
 
 # オプション指定でリビジョンが存在か確認
-if( exists $gOptions->{'-r_start'} ){
+if( exists $gOptions->{'r_start'} ){
 	# オプション指定がある
-	$srev = $gOptions->{'-r_start'};
-	$erev = $gOptions->{'-r_end'};
+	$srev = $gOptions->{'r_start'};
+	$erev = $gOptions->{'r_end'};
 }
 else{
 	# ブランチの最初と最後のリビジョンを取得する
@@ -47,14 +48,14 @@ else{
 }
 # 対象ファイル生成
 my $ptn = 'c|h|cpp|hpp|cxx|hxx';
-if( defined $gOptions->{'-t'} ){
-	$ptn = $gOptions->{'-t'};
+if( defined $gOptions->{'t'} ){
+	$ptn = $gOptions->{'t'};
 }
 
 # 除外パス生成
 my $withoutPath = undef;
-if( defined $gOptions->{'-wo'} ){
-	$withoutPath = getWithoutPath($gOptions->{'-wo'});
+if( defined $gOptions->{'wo'} ){
+	$withoutPath = getWithoutPath($gOptions->{'wo'});
 }
 
 # 対象ファイルリスト生成
@@ -145,8 +146,10 @@ sub analyzeFileList
 		$param->{'addw'} = 0;
 		$param->{'delw'} = $slinew;
 	}
-	
-#	File::Path::rmtree("tmp") or die "[tmp]$!";
+	if( !exists $gOptions->{'tmp_not_delete'} ){
+		print "tmp delete\n";
+		File::Path::rmtree("tmp") or die "[tmp]$!";
+	}
 	return \%outFileList;
 }
 
@@ -303,11 +306,11 @@ sub svnCmd
 sub getUserInfo
 {
 	my $res = '';
-	if( exists $gOptions->{'-u'} ){
-		$res = "--username $gOptions->{'-u'}";
+	if( exists $gOptions->{'u'} ){
+		$res = "--username $gOptions->{'u'}";
 	}
-	if( exists $gOptions->{'-p'} ){
-		$res = $res." --password  $gOptions->{'-p'}";
+	if( exists $gOptions->{'p'} ){
+		$res = $res." --password  $gOptions->{'p'}";
 	}
 	return $res;
 }
@@ -383,15 +386,21 @@ sub getOptions
 		if( $key eq '-r' ){ # key = value(param:param)
 			my $param = decode('cp932', $argv->[$i+1]);
 			if( $param !~ /^(%d):(%d)$/ ) {
-				die "illigal parameter with options ($param)";
+				die "illigal parameter with options ($key = $param)";
 			}
-			$options{'-r_start'} = $1;
-			$options{'-r_end'} = $2;
+			$options{'r_start'} = $1;
+			$options{'r_end'} = $2;
 			$i++;
 		}
 		elsif( $key =~ /^-(u|p|t|xls|wo)$/ ){ # key = value;
-			$options{$key} = decode('cp932', $argv->[$i+1]);
+			$options{$1} = decode('cp932', $argv->[$i+1]);
 			$i++;
+		}
+		elsif( $key =~ /^-(tmp_not_delete)$/ ){
+			$options{$1} = 1;
+		}
+		elsif( $key =~ /^-/ ){
+			die "illigal parameter with options ($key)";
 		}
 		else{
 			push @newAragv, $key;
