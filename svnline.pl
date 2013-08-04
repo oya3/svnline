@@ -91,10 +91,13 @@ sub analyzeFileList
 			$param->{'eline'} = $eline;
 			$param->{'slinew'} = $slinew;
 			$param->{'elinew'} = $elinew;
+			
 			$param->{'new'} = 0;
 			$param->{'dvs'} = $sline - $del;
 			$param->{'add'} = $add;
 			$param->{'del'} = $del;
+			
+			$param->{'neww'} = 0;
 			$param->{'dvsw'} = $slinew - $delw;
 			$param->{'addw'} = $addw;
 			$param->{'delw'} = $delw;
@@ -106,10 +109,13 @@ sub analyzeFileList
 			$param->{'eline'} = $eline;
 			$param->{'slinew'} = 0;
 			$param->{'elinew'} = $elinew;
+			
 			$param->{'new'} = $eline;
 			$param->{'dvs'} = 0;
 			$param->{'add'} = 0;
 			$param->{'del'} = 0;
+			
+			$param->{'neww'} = $elinew;
 			$param->{'dvsw'} = 0;
 			$param->{'addw'} = 0;
 			$param->{'delw'} = 0;
@@ -128,10 +134,13 @@ sub analyzeFileList
 		$param->{'eline'} = 0;
 		$param->{'slinew'} = $slinew;
 		$param->{'elinew'} = 0;
+		
 		$param->{'new'} = 0;
 		$param->{'dvs'} = 0;
 		$param->{'add'} = 0;
 		$param->{'del'} = $sline;
+		
+		$param->{'neww'} = 0;
 		$param->{'dvsw'} = 0;
 		$param->{'addw'} = 0;
 		$param->{'delw'} = $slinew;
@@ -180,10 +189,11 @@ sub exportFile
 
 	my $file_sjis = encode('cp932', "$file");
 	open (OUT, ">$file_sjis") or die "[$file_sjis]$!";
-	print OUT encode('cp932', "ファイル名,元,変更後,流用,追加,削除,新規,元,変更後,流用,追加,削除\n");
+	print OUT encode('cp932', ",ソース行数,,,,,,コメント除去行数,,,,,\n");
+	print OUT encode('cp932', "ファイル名,元,変更後,新規,流用,追加,削除,元,変更後,新規,流用,追加,削除\n");
 	foreach my $file ( sort keys %{$analyzeReport->{'param'}} ){
 		my $param = \%{$analyzeReport->{'param'}{$file}};
-		my $line = encode('cp932', "$file,$param->{'sline'},$param->{'eline'},$param->{'dvs'},$param->{'add'},$param->{'del'},$param->{'new'},$param->{'slinew'},$param->{'elinew'},$param->{'dvsw'},$param->{'addw'},$param->{'delw'}\n");
+		my $line = encode('cp932', "$file,$param->{'sline'},$param->{'eline'},$param->{'new'},$param->{'dvs'},$param->{'add'},$param->{'del'},$param->{'slinew'},$param->{'elinew'},$param->{'neww'},$param->{'dvsw'},$param->{'addw'},$param->{'delw'}\n");
 		print OUT $line;
 	}
 	close OUT;

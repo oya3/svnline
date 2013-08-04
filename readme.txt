@@ -6,6 +6,10 @@ SVN で管理されたソース差分から総ライン数、コメント除去後ライン数を生成する。
 使い方：
 perl svnline.pl [options] <svn address> <output file>
 
+本ツールは、unix command の diff が必要です。 
+http://www.gnu.org/software/diffutils/diffutils.html
+http://gnuwin32.sourceforge.net/packages/diffutils.htm
+
 仕様：
 指定された svn address の開始、終了（最新）リビジョンから各行数を取得する。
 オプションで開始、終了リビジョンを指定することも可能。
