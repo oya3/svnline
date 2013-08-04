@@ -57,6 +57,7 @@ if( defined $gOptions->{'-wo'} ){
 	$withoutPath = getWithoutPath($gOptions->{'-wo'});
 }
 
+# 対象ファイルリスト生成
 my $targetFileList=undef;
 $targetFileList->{$srev} = getFileList( $address, $srev, $ptn, $withoutPath); # start
 $targetFileList->{$erev} = getFileList( $address, $erev, $ptn, $withoutPath); # end
@@ -73,50 +74,101 @@ sub analyzeFileList
 	mkdir "tmp";
 	svnCmd("export","-r $srev", $address, "tmp\/$srev");
 	svnCmd("export","-r $erev", $address, "tmp\/$erev");
-	
+
 	my %outFileList = ();
 	$outFileList{'srev'} = $srev;
 	$outFileList{'erev'} = $erev;
-	while( my ($rev, $fileList) = each %{$targetFileList}){
-		foreach my $file (@{$fileList}){
-			#print encode('cp932', "[tmp\/$rev\/$file]\n");
-			
-			my $file_sjis = encode('cp932', "tmp\/$rev\/$file");
-			open (IN, "<$file_sjis") or die "[$file_sjis]$!";
-			my @array = <IN> ;
-			close IN;
-			unlink $file_sjis;
-
-			my ($total,$withoutCommentTotal) = getLineForCPP(\@array);
-			my $fileCount = \%{$outFileList{'file'}{$rev}{$file}};
-			$fileCount->{'total'} = $total;
-			$fileCount->{'withoutCommentTotal'} = $withoutCommentTotal;
-			#print encode('cp932', "<analyzeFileList>[$total][$withoutCommentTotal]$file\[$fileCount->{'total'}\]\[$fileCount->{'withoutCommentTotal'}\]\n");
+	foreach my $file (@{$targetFileList->{$erev}}){
+		my $param = \%{$outFileList{'param'}{$file}};
+		my $sfile_sjis = encode('cp932', "tmp\/$srev\/$file");
+		# 過去にファイルが存在しているか確認
+		if( -f $sfile_sjis ){
+			my ($sline,$slinew) = createFileWithoutCommnet("tmp\/$srev\/$file");
+			my ($eline,$elinew) = createFileWithoutCommnet("tmp\/$erev\/$file");
+			my ($add,$del) = getModifiedLine("tmp\/$srev\/$file", "tmp\/$erev\/$file");
+			my ($addw,$delw) = getModifiedLine("tmp\/$srev\/$file\.woc", "tmp\/$erev\/$file\.woc");
+			$param->{'sline'} = $sline;
+			$param->{'eline'} = $eline;
+			$param->{'slinew'} = $slinew;
+			$param->{'elinew'} = $elinew;
+			$param->{'new'} = 0;
+			$param->{'dvs'} = $sline - $del;
+			$param->{'add'} = $add;
+			$param->{'del'} = $del;
+			$param->{'dvsw'} = $slinew - $delw;
+			$param->{'addw'} = $addw;
+			$param->{'delw'} = $delw;
+		}
+		else{
+			# 追加ファイル
+			my ($eline,$elinew) = createFileWithoutCommnet("tmp\/$erev\/$file");
+			$param->{'sline'} = 0;
+			$param->{'eline'} = $eline;
+			$param->{'slinew'} = 0;
+			$param->{'elinew'} = $elinew;
+			$param->{'new'} = $eline;
+			$param->{'dvs'} = 0;
+			$param->{'add'} = 0;
+			$param->{'del'} = 0;
+			$param->{'dvsw'} = 0;
+			$param->{'addw'} = 0;
+			$param->{'delw'} = 0;
 		}
 	}
-	File::Path::rmtree("tmp") or die "[tmp]$!";
+	# 削除済みファイルの検索
+	foreach my $file (@{$targetFileList->{$srev}}){
+		my $param = \%{$outFileList{'param'}{$file}};
+		my $efile_sjis = encode('cp932', "tmp\/$erev\/$file");
+		if( -f $efile_sjis ){
+			next;
+		}
+		# 削除ファイル
+		my ($sline,$slinew) = createFileWithoutCommnet("tmp\/$srev\/$file");
+		$param->{'sline'} = $sline;
+		$param->{'eline'} = 0;
+		$param->{'slinew'} = $slinew;
+		$param->{'elinew'} = 0;
+		$param->{'new'} = 0;
+		$param->{'dvs'} = 0;
+		$param->{'add'} = 0;
+		$param->{'del'} = $sline;
+		$param->{'dvsw'} = 0;
+		$param->{'addw'} = 0;
+		$param->{'delw'} = $slinew;
+	}
 	
+#	File::Path::rmtree("tmp") or die "[tmp]$!";
 	return \%outFileList;
 }
 
-sub getLineForCPP
+sub createFileWithoutCommnet
 {
-	my ($array) = @_;
+	my ($file) = @_;
 	
-	my $total = @{$array}; # トータル行数
-	my $sourceString = decode('cp932', join '', @{$array});
-	$sourceString =~ s#/\*[^*]*\*+([^/*][^*]*\*+)*/|//[^\n]*|("(\\.|[^"\\])*"|'(\\.|[^'\\])*'|.[^/"'\\]*)#defined $2 ? $2 : ""#gse;
-	my @sourceWithoutCommnet = split /\n/, $sourceString;
-	my @source = ();
-	foreach my $line (@sourceWithoutCommnet){
+	my $file_sjis = encode('cp932', "$file");
+	open (IN, "<$file_sjis") or die "[$file_sjis]$!";
+	my @total = <IN> ;
+	close IN;
+	
+	my $totalString = decode('cp932', join '', @total);
+	# ファイルタイプ別に処理する必要がある
+	$totalString =~ s#/\*[^*]*\*+([^/*][^*]*\*+)*/|//[^\n]*|("(\\.|[^"\\])*"|'(\\.|[^'\\])*'|.[^/"'\\]*)#defined $2 ? $2 : ""#gse;
+	my @source = split /\n/, $totalString;
+	my @sourceWithoutCommnet = ();
+	foreach my $line (@source){
 		if( $line =~ /^\s*$/ ){ # 空行は削除
 			next;
 		}
-		push @source,$line;
+		push @sourceWithoutCommnet,$line."\n";
 	}
-	#	print encode('cp932', join "\n",@source);
-	my $withoutTotal = @source; # コメント除去行数
-	return ($total, $withoutTotal);
+	my $sourceWithoutCommnetString = join '', @sourceWithoutCommnet;
+	my $outfile_sjis = encode('cp932', "$file\.woc");
+	open (OUT, ">$outfile_sjis") or die "[$outfile_sjis]$!";
+	print OUT encode('cp932', $sourceWithoutCommnetString);
+	close OUT;
+	my $line = @source;
+	my $lineWithoutCommnet = @sourceWithoutCommnet;
+	return ($line,$lineWithoutCommnet);
 }
 
 sub exportFile
@@ -126,33 +178,12 @@ sub exportFile
 	my $srev = $analyzeReport->{'srev'};
 	my $erev = $analyzeReport->{'erev'};
 
-	my %out = ();
-	while( my ($file, $param) = each %{$analyzeReport->{'file'}{$srev}}){
-		$out{$file}{'s_total'} = $param->{'total'};
-		$out{$file}{'s_withoutCommentTotal'} = $param->{'withoutCommentTotal'};
-		$out{$file}{'e_total'} = 0;
-		$out{$file}{'e_withoutCommentTotal'} = 0;
-		#print encode('cp932', "<exportFile start>[$srev]$file\[$out{$file}{'s_total'}\]\[$out{$file}{'s_withoutCommentTotal'}\]\n");
-	}
-	while( my ($file, $param) = each %{$analyzeReport->{'file'}{$erev}}){
-		$out{$file}{'e_total'} = $param->{'total'};
-		$out{$file}{'e_withoutCommentTotal'} = $param->{'withoutCommentTotal'};
-		if( !defined $out{$file}{'s_total'} ){
-			$out{$file}{'s_total'} = 0;
-			$out{$file}{'s_withoutCommentTotal'} = 0;
-		}
-		#print encode('cp932', "<exportFile end>[$erev]$file\[$out{$file}{'e_total'}\]\[$out{$file}{'e_withoutCommentTotal'}\]\n");
-	}
-	my $file_sjis = encode('cp932', $file);
-	
+	my $file_sjis = encode('cp932', "$file");
 	open (OUT, ">$file_sjis") or die "[$file_sjis]$!";
-	print OUT encode('cp932', ",全行数,,,,,コメント除去後行数,,,,\n");
-	print OUT encode('cp932', "ファイル名,rev.$srev,rev.$erev,流用,追加,削除,rev.$srev,rev\.$erev,流用,追加,削除\n");
-	foreach my $file ( sort keys %out ){
-		my $param = \%{$out{$file}};
-		my ($diversion, $add, $del)   = getModifiedLine($param->{'s_total'}, $param->{'e_total'});
-		my ($wdiversion, $wadd, $wdel) = getModifiedLine($param->{'s_withoutCommentTotal'}, $param->{'e_withoutCommentTotal'});
-		my $line = encode('cp932', "$file,$param->{'s_total'},$param->{'e_total'},$diversion,$add,$del,$param->{'s_withoutCommentTotal'},$param->{'e_withoutCommentTotal'},$wdiversion,$wadd,$wdel\n");
+	print OUT encode('cp932', "ファイル名,元,変更後,流用,追加,削除,新規,元,変更後,流用,追加,削除\n");
+	foreach my $file ( sort keys %{$analyzeReport->{'param'}} ){
+		my $param = \%{$analyzeReport->{'param'}{$file}};
+		my $line = encode('cp932', "$file,$param->{'sline'},$param->{'eline'},$param->{'dvs'},$param->{'add'},$param->{'del'},$param->{'new'},$param->{'slinew'},$param->{'elinew'},$param->{'dvsw'},$param->{'addw'},$param->{'delw'}\n");
 		print OUT $line;
 	}
 	close OUT;
@@ -160,19 +191,18 @@ sub exportFile
 
 sub getModifiedLine
 {
-	my ($startLine, $endLine) = @_;
-	#print "lines[$startLine\/$endLine]\n";
-	my $mod = $endLine - $startLine;
-	my $diversion =0; my $add = 0; my $del = 0;
-	if( $mod >= 0 ){
-		$add = $mod;
-		$diversion = $startLine;
+	my ($sfile, $efile) = @_;
+	my $res = execCmd("diff $sfile $efile");
+	my $add = 0; my $del = 0;
+	foreach my $string (@{$res}){
+		if( $string =~ /^< / ){
+			$del++;
+		}
+		elsif( $string =~ /^> / ){
+			$add++;
+		}
 	}
-	else{
-		$del =abs($mod);
-		$diversion = $endLine;
-	}
-	return ($diversion, $add, $del);
+	return ($add, $del);
 }
 
 sub getWithoutPath
