@@ -10,7 +10,7 @@ use Encode::JP;
 use File::Path;
 use Data::Dumper;
 
-print "svnline ver. 0.13.08.08.\n";
+print "svnline ver. 0.13.08.14.\n";
 my ($argv, $gOptions) = getOptions(\@ARGV); # オプションを抜き出す
 my $args = @{$argv};
 
@@ -23,6 +23,7 @@ if( $args != 2 ){
 	print "          : -xls (fileNmae) : output for excel.\n";
 	print "          : -wo (file) : without file path.\n";
 	print "          : -tmp_not_delete\n";
+	print "          : -kco : kazoecao mode\n";
 	print "          : -dbg : debug mode.\n";
 	print "https://github.com/oya3/svnline\n";
     exit;
@@ -30,10 +31,11 @@ if( $args != 2 ){
 
 { # current path of this script.
 	my $mypath = decode('cp932', __FILE__);
-	$mypath =~ s/^(.+)[\\\/].+$/$1/;
-	$mypath =~ s/\\/\//g;
-	if( $mypath !~ /\// ){
+	if( $mypath eq 'svnline.pl' ){
 		$mypath = '.';
+	}
+	else{
+		$mypath =~ s/^(.+?)svnline.pl/$1/;
 	}
 	$gOptions->{'script_path'} = $mypath;
 	dbg_print("script_path : $mypath\n");
@@ -79,7 +81,13 @@ $targetFileList->{$srev} = getFileList( $address, $srev, $ptn, $withoutPath); # 
 $targetFileList->{$erev} = getFileList( $address, $erev, $ptn, $withoutPath); # end
 
 my $analyzeReport = analyzeFileList( $address, $targetFileList, $srev, $erev);
-exportFile($address, $outputFile, $analyzeReport);
+
+if( $gOptions->{'kco'} ){
+	exportFileForKazoecao($address, $outputFile, $analyzeReport);
+}
+else{
+	exportFile($address, $outputFile, $analyzeReport);
+}
 print "complate.\n";
 exit;
 
@@ -116,16 +124,18 @@ sub analyzeFileList
 			my ($addw,$delw) = getModifiedLine("tmp\/$srev\/$file\.woc", "tmp\/$erev\/$file\.woc");
 			$param->{'sline'} = $sline;
 			$param->{'eline'} = $eline;
-			$param->{'slinew'} = $slinew;
+			$param->{'slinew'} = $slinew; # 流用元
 			$param->{'elinew'} = $elinew;
 			
-			$param->{'new'} = 0;
-			$param->{'dvs'} = $sline - $del;
-			$param->{'add'} = $add;
-			$param->{'del'} = $del;
+			$param->{'new'} = 0; # 新規
+#			$param->{'dvs'} = $eline - ($add + $del); # 流用 = 変更後ステップ数 －（修正ステップ数＋削除ステップ数）
+			$param->{'dvs'} = $eline - $add; # 流用 = 変更後ステップ数 － 修正ステップ数
+			$param->{'add'} = $add; # 修正
+			$param->{'del'} = $del; # 削除
 			
 			$param->{'neww'} = 0;
-			$param->{'dvsw'} = $slinew - $delw;
+#			$param->{'dvsw'} = $elinew - ($addw + $delw); # 流用 = 変更後実ステップ数 －（実修正ステップ数＋実削除ステップ数）
+			$param->{'dvsw'} = $elinew - $addw; # 流用 = 変更後実ステップ数 － 実修正ステップ数
 			$param->{'addw'} = $addw;
 			$param->{'delw'} = $delw;
 		}
@@ -179,6 +189,74 @@ sub analyzeFileList
 	return \%outFileList;
 }
 
+sub trim_ret
+{
+	my $string = shift;
+	$string =~ s/\n//g;
+	return $string;
+}
+
+# #if 定数式
+# 　　取り込むプログラム
+# #elif 定数式
+# 　　取り込むプログラム
+# #else
+# 　　取り込むプログラム
+# #endif 
+sub trim_preprocess
+{
+	my ($string) = @_;
+	my @array = split /\n/, $string;
+
+	my $flg = 0;
+	my $res = '';
+	foreach my $line (@array){
+		if( !$flg ){
+			if( $line =~ /^\s*\#\s*(if|elif)\s+(\d+)/ ){
+				$flg = eval($2);
+			}
+			elsif( $line =~ /^\s*\#\s*else/ ){
+				$flg = 1;
+			}
+			elsif( $line =~ /^\s*\#\s*endif/ ){
+				last;
+			}
+		}
+		else{
+			if( $line =~ /^\s*\#\s*(else|elif|endif)/ ){
+				$flg = 0; #  正常に取得
+				last;
+			}
+			$res = $res.$line."\n";
+		}
+	}
+	if( $flg ){
+		return $string; 
+	}
+	return $res;
+}
+
+sub trim_if_endif_next
+{
+	my ($out,$in)
+}
+
+sub trim_if_endif
+{
+	my $string = shift;
+	
+	my @array = split /\n/, $string;
+
+	foreach my $line (@array){
+		if( $line =~ /\s*\#\s*if\s*(\d+)/ ){
+		}
+		
+	}
+
+	
+}
+
+
 sub createFileWithoutCommnet
 {
 	my ($file) = @_;
@@ -191,6 +269,15 @@ sub createFileWithoutCommnet
 	my $totalString = decode('cp932', join '', @total);
 	# ファイルタイプ別に処理する必要がある
 	$totalString =~ s#/\*[^*]*\*+([^/*][^*]*\*+)*/|//[^\n]*|("(\\.|[^"\\])*"|'(\\.|[^'\\])*'|.[^/"'\\]*)#defined $2 ? $2 : ""#gse;
+		
+	# 括弧を複数行から１行に戻す
+#	$totalString =~ s/(\([^()]*\))/trim_ret($1)/ge;
+
+	# プリプロセス#if \d - #endif を除去
+#	$totalString = trim_if_endif($totalString);
+	$totalString =~ s/(\#\s*if\s+.+?\#\s*endif\s*\n)/trim_preprocess($1)/gsei;
+
+	
 	my @source = split /\n/, $totalString;
 	my @sourceWithoutCommnet = ();
 	foreach my $line (@source){
@@ -204,10 +291,40 @@ sub createFileWithoutCommnet
 	open (OUT, ">$outfile_sjis") or die "[$outfile_sjis]$!";
 	print OUT encode('cp932', $sourceWithoutCommnetString);
 	close OUT;
-	my $line = @source;
-	my $lineWithoutCommnet = @sourceWithoutCommnet;
+	my $line = scalar(@total);
+	my $lineWithoutCommnet = scalar(@sourceWithoutCommnet);
 	return ($line,$lineWithoutCommnet);
 }
+
+# かぞえちゃおに表示内容を合わせる
+# 種類,新規,修正元,修正,流用,削除, ($erevステップ数, $erev実ステップ数, $srevステップ数, $srev実ステップ数,) option
+#  種類   = 拡張子
+#  新規   = 新規追加ファイル実ステップ数
+#  修正元 = 変更前実ステップ数
+#  流用   = 変更後実ステップ数 －（実修正ステップ数＋実削除ステップ数）
+sub exportFileForKazoecao
+{
+	my ($address, $file,$analyzeReport) = @_;
+	print "export file.\n";
+	
+	my $srev = $analyzeReport->{'srev'};
+	my $erev = $analyzeReport->{'erev'};
+
+	my $file_sjis = encode('cp932', "$file");
+	open (OUT, ">$file_sjis") or die "[$file_sjis]$!";
+	print OUT encode('cp932', ",,,,,,,$erev,,$srev\n");
+	print OUT encode('cp932', "ファイル名,種類,新規,修正元,修正,流用,削除,ステップ数,実ステップ数,ステップ数,実ステップ数\n");
+	foreach my $file ( sort keys %{$analyzeReport->{'param'}} ){
+		my $param = \%{$analyzeReport->{'param'}{$file}};
+		my $type = $file;
+		$type =~ s/^.+?\.(.+?)$/$1/;
+		my $line = encode('cp932', "$file,$type,$param->{'neww'},$param->{'slinew'},$param->{'addw'},$param->{'dvsw'},$param->{'delw'},$param->{'eline'},$param->{'elinew'},$param->{'sline'},$param->{'slinew'}\n");
+		print OUT $line;
+	}
+	close OUT;
+}
+
+
 
 sub exportFile
 {
@@ -235,21 +352,46 @@ sub exportFile
 sub getModifiedLine
 {
 	my ($sfile, $efile) = @_;
-	my $cmd = "$gOptions->{'script_path'}\/diff.exe $sfile $efile";
+	my $cmd = "$gOptions->{'diff.exe'} $sfile $efile";
 	$cmd =~ tr/\//\\/;
 	my $res = execCmd($cmd);
 	dbg_print("diff [$sfile][$efile]\n");
 	dbg_print(join '' , @{$res});
 	my $add = 0; my $del = 0;
+	my $mod = { 'a'=> 0, 'd'=> 0, 'c'=>0 };
 	foreach my $string (@{$res}){
-		if( $string =~ /^< / ){
-			$del++;
+ 		if( $string =~ /^(\d+?)([acd])(\d+?)$/ ){
+			getCountACD($mod, $2, $3, $3); # type, start, end
+ 			next;
 		}
-		elsif( $string =~ /^> / ){
-			$add++;
+ 		elsif( $string =~ /^(\d+?)([ac])(\d+?),(\d+?)$/ ){
+			getCountACD($mod, $2, $3, $4);
+			next;
+ 		}
+ 		elsif( $string =~ /^(\d+?),(\d+?)([dc])(\d+?)$/ ){
+			getCountACD($mod, $3, $1, $2);
+ 			next;
 		}
+ 		elsif( $string =~ /^(\d+?),(\d+?)([c])(\d+?),(\d+?)$/ ){
+			getCountACD($mod, $3, $4, $5);
+ 			next;
+ 		}
+ 		elsif( $string =~ /^(<|>|---)/ ){
+			next;
+ 		}
+ 		print encode('cp932', "unknown format...[$string]\n");
+ 		exit;
 	}
-	return ($add, $del);
+	dbg_print "a[$mod->{'a'}] c[$mod->{'c'}] d[$mod->{'d'}]\n";
+	return ( ($mod->{'a'}+$mod->{'c'}), ($mod->{'d'}) );
+	
+}
+
+sub getCountACD
+{
+	my ($mod, $type, $start, $end) = @_;
+	$mod->{$type} += ($end - $start + 1);
+#	dbg_print "[$type]$mod->{$type} [$start] - [$end]\n";
 }
 
 sub getWithoutPath
@@ -359,11 +501,24 @@ sub isInstallSVN
 
 sub isInstallDiff
 {
-	my $cmd = "$gOptions->{'script_path'}\/diff.exe";
+	{ # path が通っているか
+		my $cmd = "diff.exe";
+		my $res = execCmd("diff.exe");
+		my $string = join '', @{$res};
+
+		if( $string =~ /diff.+?--help/g ){
+			$gOptions->{'diff.exe'} = $cmd;
+			return 1; # installed.
+		}
+	}
+	# svnline 直下
+	my $cmd = "$gOptions->{'script_path'}"."diff.exe";
 	$cmd =~ tr/\//\\/;
 	my $res = execCmd($cmd);
 	my $string = join '', @{$res};
+
 	if( $string =~ /diff.+?--help/g ){
+		$gOptions->{'diff.exe'} = $cmd;
 		return 1; # installed.
 	}
 	return 0; # not install.
@@ -452,7 +607,7 @@ sub getOptions
 			$options{$1} = decode('cp932', $argv->[$i+1]);
 			$i++;
 		}
-		elsif( $key =~ /^-(tmp_not_delete|dbg)$/ ){
+		elsif( $key =~ /^-(tmp_not_delete|dbg|kco)$/ ){
 			$options{$1} = 1;
 		}
 		elsif( $key =~ /^-/ ){
