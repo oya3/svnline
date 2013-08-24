@@ -10,16 +10,20 @@ use Encode::JP;
 use File::Path;
 use Data::Dumper;
 
-print "svnline ver. 0.13.08.14.\n";
+use Spreadsheet::WriteExcel;
+
+print "svnline ver. 0.13.08.24.\n";
 my ($argv, $gOptions) = getOptions(\@ARGV); # オプションを抜き出す
 my $args = @{$argv};
+
+my %gTk = ();
 
 if( $args != 2 ){
 	print "Usage: svnline [options] <svn address> <output file>\n";
 	print "  options : -u (svn user): user.\n";
 	print "          : -p (svn password): password.\n";
 	print "          : -r (start:end) : revsion number.\n";
-	print "          : -t (file type regexp) : target file type.\n";
+	print "          : -t (file type regexp) : target file type. default is c/c++ (c|h|cpp|hpp|cxx|hxx).\n";
 	print "          : -xls (fileNmae) : output for excel.\n";
 	print "          : -wo (file) : without file path.\n";
 	print "          : -tmp_not_delete\n";
@@ -83,7 +87,12 @@ $targetFileList->{$erev} = getFileList( $address, $erev, $ptn, $withoutPath); # 
 my $analyzeReport = analyzeFileList( $address, $targetFileList, $srev, $erev);
 
 if( $gOptions->{'kco'} ){
-	exportFileForKazoecao($address, $outputFile, $analyzeReport);
+	if( $outputFile =~ /xls$/ ){
+		exportXLSForKazoecao($address, $outputFile, $analyzeReport);
+	}
+	else{
+		exportFileForKazoecao($address, $outputFile, $analyzeReport);
+	}
 }
 else{
 	exportFile($address, $outputFile, $analyzeReport);
@@ -94,9 +103,43 @@ exit;
 sub dbg_print
 {
 	my ($string) = @_;
-	if( defined $gOptions->{'dbg'} ){
+	if( defined $gOptions->{'nogui'} ){
+		if( defined $gOptions->{'dbg'} ){
+			print encode('cp932', $string);
+		}
+	}
+# 	else{
+# 		$gTk{'log'}->insert('end', $string);
+# 		$gTk{'log'}->see( 'end' );
+# 	}
+}
+
+sub _print_
+{
+	my ($string, $col) = @_;
+	
+	if( defined $gOptions->{'nogui'} ){
 		print encode('cp932', $string);
 	}
+# 	else{
+# 		$gTk{'log'}->insert('end', $string);
+# 		if( defined $col ){
+# 			$gTk{'log'}->itemconfigure('end', -fg=>$col);
+# 		}
+# 		$gTk{'log'}->see( 'end' );
+# 	}
+}
+
+sub err_print
+{
+	my ($string) = @_;
+	_print_($string, '#ff0000');
+}
+
+sub sys_print
+{
+	my ($string) = @_;
+	_print_($string);
 }
 
 sub analyzeFileList
@@ -104,12 +147,12 @@ sub analyzeFileList
 	my ( $address, $targetFileList, $srev, $erev) = @_;
 
 	mkdir "tmp";
-	print "exporting... [$srev]\n";
+	sys_print "exporting... [$srev]\n";
 	svnCmd("export","-r $srev", $address, "tmp\/$srev");
-	print "exporting... [$erev]\n";
+	sys_print "exporting... [$erev]\n";
 	svnCmd("export","-r $erev", $address, "tmp\/$erev");
 
-	print "analyzing... [$srev][$erev]\n";
+	sys_print "analyzing... [$srev][$erev]\n";
 	my %outFileList = ();
 	$outFileList{'srev'} = $srev;
 	$outFileList{'erev'} = $erev;
@@ -122,6 +165,11 @@ sub analyzeFileList
 			my ($eline,$elinew) = createFileWithoutCommnet("tmp\/$erev\/$file");
 			my ($add,$del) = getModifiedLine("tmp\/$srev\/$file", "tmp\/$erev\/$file");
 			my ($addw,$delw) = getModifiedLine("tmp\/$srev\/$file\.woc", "tmp\/$erev\/$file\.woc");
+			$param->{'流用元'} = 0;
+			if( $add ){
+				$param->{'流用元'} = $slinew;
+			}
+			
 			$param->{'sline'} = $sline;
 			$param->{'eline'} = $eline;
 			$param->{'slinew'} = $slinew; # 流用元
@@ -142,6 +190,8 @@ sub analyzeFileList
 		else{
 			# 追加ファイル
 			my ($eline,$elinew) = createFileWithoutCommnet("tmp\/$erev\/$file");
+			
+			$param->{'流用元'} = 0;
 			$param->{'sline'} = 0;
 			$param->{'eline'} = $eline;
 			$param->{'slinew'} = 0;
@@ -167,6 +217,8 @@ sub analyzeFileList
 		}
 		# 削除ファイル
 		my ($sline,$slinew) = createFileWithoutCommnet("tmp\/$srev\/$file");
+		$param->{'流用元'} = 0;
+		
 		$param->{'sline'} = $sline;
 		$param->{'eline'} = 0;
 		$param->{'slinew'} = $slinew;
@@ -183,7 +235,7 @@ sub analyzeFileList
 		$param->{'delw'} = $slinew;
 	}
 	if( !exists $gOptions->{'tmp_not_delete'} ){
-		print "tmp delete\n";
+		sys_print "tmp delete\n";
 		File::Path::rmtree("tmp") or die "[tmp]$!";
 	}
 	return \%outFileList;
@@ -196,67 +248,6 @@ sub trim_ret
 	return $string;
 }
 
-# #if 定数式
-# 　　取り込むプログラム
-# #elif 定数式
-# 　　取り込むプログラム
-# #else
-# 　　取り込むプログラム
-# #endif 
-sub trim_preprocess
-{
-	my ($string) = @_;
-	my @array = split /\n/, $string;
-
-	my $flg = 0;
-	my $res = '';
-	foreach my $line (@array){
-		if( !$flg ){
-			if( $line =~ /^\s*\#\s*(if|elif)\s+(\d+)/ ){
-				$flg = eval($2);
-			}
-			elsif( $line =~ /^\s*\#\s*else/ ){
-				$flg = 1;
-			}
-			elsif( $line =~ /^\s*\#\s*endif/ ){
-				last;
-			}
-		}
-		else{
-			if( $line =~ /^\s*\#\s*(else|elif|endif)/ ){
-				$flg = 0; #  正常に取得
-				last;
-			}
-			$res = $res.$line."\n";
-		}
-	}
-	if( $flg ){
-		return $string; 
-	}
-	return $res;
-}
-
-sub trim_if_endif_next
-{
-	my ($out,$in)
-}
-
-sub trim_if_endif
-{
-	my $string = shift;
-	
-	my @array = split /\n/, $string;
-
-	foreach my $line (@array){
-		if( $line =~ /\s*\#\s*if\s*(\d+)/ ){
-		}
-		
-	}
-
-	
-}
-
-
 sub createFileWithoutCommnet
 {
 	my ($file) = @_;
@@ -267,16 +258,12 @@ sub createFileWithoutCommnet
 	close IN;
 	
 	my $totalString = decode('cp932', join '', @total);
-	# ファイルタイプ別に処理する必要がある
-	$totalString =~ s#/\*[^*]*\*+([^/*][^*]*\*+)*/|//[^\n]*|("(\\.|[^"\\])*"|'(\\.|[^'\\])*'|.[^/"'\\]*)#defined $2 ? $2 : ""#gse;
-		
-	# 括弧を複数行から１行に戻す
-#	$totalString =~ s/(\([^()]*\))/trim_ret($1)/ge;
-
-	# プリプロセス#if \d - #endif を除去
-#	$totalString = trim_if_endif($totalString);
-	$totalString =~ s/(\#\s*if\s+.+?\#\s*endif\s*\n)/trim_preprocess($1)/gsei;
-
+	if( $file =~ /\.(cpp|c|cxx|hpp|h|hxx)$/ ){
+		$totalString = removeCommentForC($totalString);
+	}
+	elsif( $file =~ /\.(bas|cls|ctl|frm|dsr)$/ ){
+		$totalString = removeCommentForVB($totalString);
+	}
 	
 	my @source = split /\n/, $totalString;
 	my @sourceWithoutCommnet = ();
@@ -296,6 +283,29 @@ sub createFileWithoutCommnet
 	return ($line,$lineWithoutCommnet);
 }
 
+sub removeCommentForC
+{
+	my $totalString = shift;
+	
+	$totalString =~ s#/\*[^*]*\*+([^/*][^*]*\*+)*/|//[^\n]*|("(\\.|[^"\\])*"|'(\\.|[^'\\])*'|.[^/"'\\]*)#defined $2 ? $2 : ""#gse;
+
+	# 括弧を複数行から１行に戻す
+	#$totalString =~ s/(\([^()]*\))/trim_ret($1)/ge;
+	
+	# プリプロセス#if \d - #endif を除去
+	$totalString =~ s/\#\s*(if|ifdef|ifndef|else|elif|endif).*\n//gi;
+	return $totalString;
+}
+
+sub removeCommentForVB
+{
+	my $totalString = shift;
+	$totalString =~ s/(\'|rem).+\n/\n/gi;
+	return $totalString;
+}
+
+
+
 # かぞえちゃおに表示内容を合わせる
 # 種類,新規,修正元,修正,流用,削除, ($erevステップ数, $erev実ステップ数, $srevステップ数, $srev実ステップ数,) option
 #  種類   = 拡張子
@@ -305,7 +315,7 @@ sub createFileWithoutCommnet
 sub exportFileForKazoecao
 {
 	my ($address, $file,$analyzeReport) = @_;
-	print "export file.\n";
+	sys_print "export file.\n";
 	
 	my $srev = $analyzeReport->{'srev'};
 	my $erev = $analyzeReport->{'erev'};
@@ -324,12 +334,100 @@ sub exportFileForKazoecao
 	close OUT;
 }
 
+sub exportXLSForKazoecao
+{
+	my ($address, $file, $analyzeReport) = @_;
+	sys_print "export file.\n";
+	
+	my $srev = $analyzeReport->{'srev'};
+	my $erev = $analyzeReport->{'erev'};
+
+	my $file_sjis = encode('cp932', "$file");
+	my $workbook = Spreadsheet::WriteExcel->new($file_sjis); # Create a new Excel workbook
+	my $worksheet = $workbook->add_worksheet(); # Add a worksheet
+	{ # title
+ 		my $format = $workbook->add_format(); # Add and define a format
+ 		$format->set_bg_color('silver');
+ 		$format->set_bold();
+ 		$format->set_align('left');
+ 		$format->set_align('top');
+ 		$format->set_text_wrap();
+ 		$worksheet->set_column( 0,  1, 80); # ファイル名
+ 		$worksheet->set_column( 1,  1, 10); # 種類
+ 		$worksheet->set_column( 2, 10, 15); # ライス数
+#		$worksheet->write( 0, 0, "$address\[rev\.$srev \- $erev\]", $format);
+		my $x = 0;
+		foreach my $name ("ファイル名\n$address\[rev\.$srev \- $erev\]","種類","新規","修正元","修正","流用","削除","ステップ数","実ステップ数","変更前ステップ数","変更前実ステップ数"){
+			$worksheet->write( 0, $x, $name, $format);
+			$x++;
+		}
+	}
+	{ # values
+		my $format1 = $workbook->add_format(); # Add and define a format
+ 		$format1->set_bg_color('31'); # 薄い青
+		
+		$worksheet->write( 1, 0, "全ステップ数", $format1);
+		$worksheet->write( 1, 1, "", $format1);
+		$worksheet->write( 2, 0, "(キロステップ数)", $format1);
+		$worksheet->write( 2, 1, "", $format1);
+		
+		my $format = $workbook->add_format(); # Add and define a format
+		my $y = 3;
+		foreach my $file ( sort keys %{$analyzeReport->{'param'}} ){
+			my $param = \%{$analyzeReport->{'param'}{$file}};
+			my $type = $file;
+			$type =~ s/^.+?\.(.+?)$/$1/;
+			
+			$worksheet->write( $y, 0, $file, $format);
+			$worksheet->write( $y, 1, $type, $format);
+			my $x = 2;
+			foreach my $item ('neww','流用元','addw','dvsw','delw','eline','elinew','sline','slinew'){
+				$worksheet->write( $y, $x, $param->{$item}, $format);
+				$x++;
+			}
+			$y++;
+		}
+		for(my $i=0;$i<9;$i++){
+			my $x = 2+$i;
+			my $sy = 3+1;
+			my $col = excel_num2col($x);
+			my $cmd = "=SUM($col$sy:$col$y)";
+			$worksheet->write( 1, $x, $cmd, $format1);
+			my $ey = $y+1;
+			my $cmd2 = "=$col"."2/1024)";
+			$worksheet->write( 2, $x, $cmd2, $format1);
+		}
+	}
+	$workbook->close;
+}
+
+# num to A-Z for excel.
+sub excel_num2col
+{
+	my ($bb) = @_;
+	
+	my @dst = ();
+	do {
+		my $mod = ($bb % 26);
+		push @dst, unpack("C", 'A') + $mod;
+		$bb = int( $bb / 26) - 1;
+	}while( $bb >= 0 );
+
+#	return join '',@dst;
+# #	printf("[%s][%s]\n",chr($dst[0]),chr($dst[1]));
+ 	my $line = '';
+ 	foreach my $str (@dst){
+ 		$line = chr($str).$line;
+ 	}
+# #	printf("sub : $line\n");
+	return $line;
+}
 
 
 sub exportFile
 {
 	my ($address, $file,$analyzeReport) = @_;
-	print "export file.\n";
+	sys_print "export file.\n";
 	
 	my $srev = $analyzeReport->{'srev'};
 	my $erev = $analyzeReport->{'erev'};
@@ -360,6 +458,7 @@ sub getModifiedLine
 	my $add = 0; my $del = 0;
 	my $mod = { 'a'=> 0, 'd'=> 0, 'c'=>0 };
 	foreach my $string (@{$res}){
+		chomp $string;
  		if( $string =~ /^(\d+?)([acd])(\d+?)$/ ){
 			getCountACD($mod, $2, $3, $3); # type, start, end
  			next;
@@ -376,10 +475,10 @@ sub getModifiedLine
 			getCountACD($mod, $3, $4, $5);
  			next;
  		}
- 		elsif( $string =~ /^(<|>|---)/ ){
+ 		elsif( $string =~ /^(<|>|---|\\ No newline at end of file)/ ){
 			next;
  		}
- 		print encode('cp932', "unknown format...[$string]\n");
+ 		print encode('cp932', "unknown format...[$string]\n[$sfile][$efile]\n");
  		exit;
 	}
 	dbg_print "a[$mod->{'a'}] c[$mod->{'c'}] d[$mod->{'d'}]\n";
@@ -405,6 +504,7 @@ sub getWithoutPath
 	foreach my $path (@array){
 		$path = decode('cp932', $path);
 		chomp $path;
+		$path =~ s/\\/\//g;
 		push @out, $path;
 	}
 	return \@out;
@@ -413,7 +513,7 @@ sub getWithoutPath
 sub getFileList
 {
 	my ($address, $rev, $ptn, $withoutPath) = @_;
-	print "create file list.[$rev]\n";
+	sys_print "create file list.[$rev]\n";
 	
 	my $lists = svnCmd("list","--recursive -r $rev", $address, "");
 	my @out = ();
@@ -433,6 +533,7 @@ sub getFileList
 				}
 				if( $i != @{$withoutPath} ){
 					# 除外パス
+					dbg_print "skip.. $fileName\n";
 					next;
 				}
 			}
