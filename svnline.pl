@@ -522,7 +522,7 @@ sub getFileList
 		if( $fileName =~ /.+?\/$/ ){ # フォルダは無視
 			next;
 		}
-		if( $fileName =~ /.+?\.($ptn)$/ ){ # 対象ファイルのみ抽出
+		if( $fileName =~ /.+?\.($ptn)$/i ){ # 対象ファイルのみ抽出
 			if( defined $withoutPath ){
 				my $i = 0;
 				for(;$i<@{$withoutPath};$i++){
@@ -549,10 +549,13 @@ sub execCmd
 {
 	my ($cmd) = @_;
 	dbg_print("cmd : $cmd\n");
+	$cmd = encode('cp932', $cmd);
+#	print "$cmd\n";
 	open my $rs, "$cmd 2>&1 |";
 	my @rlist = <$rs>;
 	my @out = ();
 	foreach my $line (@rlist){
+#		print "$line\n";
 		push @out, decode('cp932', $line);
 	}
 	close $rs;
